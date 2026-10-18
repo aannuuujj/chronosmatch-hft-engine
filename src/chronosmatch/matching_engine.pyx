@@ -1,16 +1,30 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
 
-"""Cython order book with price-time priority."""
+"""Cython order book with typed resting-order objects."""
 
 from libc.stdint cimport int64_t
 
 
-cdef struct Order:
-    int64_t order_id
-    int64_t price
-    int64_t quantity
-    int64_t timestamp
-    int side
+cdef class RestingOrder:
+    cdef public int64_t order_id
+    cdef public int side
+    cdef public int64_t price
+    cdef public int64_t quantity
+    cdef public int64_t timestamp
+
+    def __cinit__(
+        self,
+        int64_t order_id,
+        int side,
+        int64_t price,
+        int64_t quantity,
+        int64_t timestamp,
+    ):
+        self.order_id = order_id
+        self.side = side
+        self.price = price
+        self.quantity = quantity
+        self.timestamp = timestamp
 
 
 cpdef long long match_quantity(
@@ -28,7 +42,7 @@ cpdef long long match_quantity(
 
 
 cdef class CythonOrderBook:
-    """Basic order book; orders at each price retain insertion order."""
+    """Price-time priority book using typed resting-order objects."""
 
     cdef dict bids
     cdef dict asks
@@ -50,7 +64,7 @@ cdef class CythonOrderBook:
         cdef dict opposite
         cdef dict own
         cdef list resting_orders
-        cdef dict resting
+        cdef RestingOrder resting
         cdef long long best_price
         cdef long long traded
         cdef list new_trades = []
@@ -73,20 +87,20 @@ cdef class CythonOrderBook:
 
             resting_orders = opposite[best_price]
             resting = resting_orders[0]
-            traded = quantity if quantity < resting["quantity"] else resting["quantity"]
+            traded = quantity if quantity < resting.quantity else resting.quantity
 
             new_trades.append({
                 "price": best_price,
                 "quantity": traded,
-                "buy_order_id": order_id if side == 0 else resting["order_id"],
-                "sell_order_id": resting["order_id"] if side == 0 else order_id,
+                "buy_order_id": order_id if side == 0 else resting.order_id,
+                "sell_order_id": resting.order_id if side == 0 else order_id,
                 "timestamp": timestamp,
             })
 
             quantity -= traded
-            resting["quantity"] -= traded
+            resting.quantity -= traded
 
-            if resting["quantity"] == 0:
+            if resting.quantity == 0:
                 resting_orders.pop(0)
             if not resting_orders:
                 del opposite[best_price]
@@ -94,13 +108,9 @@ cdef class CythonOrderBook:
         if quantity > 0:
             if price not in own:
                 own[price] = []
-            own[price].append({
-                "order_id": order_id,
-                "side": side,
-                "price": price,
-                "quantity": quantity,
-                "timestamp": timestamp,
-            })
+            own[price].append(
+                RestingOrder(order_id, side, price, quantity, timestamp)
+            )
 
         self.trades.extend(new_trades)
         return new_trades
